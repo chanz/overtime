@@ -51,7 +51,7 @@ public Plugin:myinfo = {
 	name 						= "Overtime",
 	author 						= "Chanz",
 	description 				= "Extends the time limit before it reaches 0.0, if the game is a tie/draw",
-	version 					= "1.0",
+	version 					= "1.1",
 	url 						= "http://bcserv.eu/"
 }
 
@@ -78,8 +78,9 @@ public Plugin:myinfo = {
 
 
 // Console Variables
-new Handle:g_cvarEnable 					= INVALID_HANDLE;
+new Handle:g_cvarEnable = INVALID_HANDLE;
 new Handle:g_cvarExtendTime = INVALID_HANDLE;
+new Handle:g_cvarCheckInterval = INVALID_HANDLE;
 
 // Native Cvars
 new Handle:g_cvarTimeLimit = INVALID_HANDLE;
@@ -89,6 +90,7 @@ new Handle:g_cvarTeamPlay = INVALID_HANDLE;
 new g_iPlugin_Enable 					= 1;
 new g_iPlugin_TeamPlay = -1;
 new Float:g_flPlugin_ExtendTime = 0.0;
+new Float:g_flPlugin_CheckInterval = 0.5;
 
 // Timers
 
@@ -98,6 +100,7 @@ new Float:g_flPlugin_ExtendTime = 0.0;
 
 // Game Variables
 new EngineVersion:g_evEngine_Version = Engine_Unknown; // Guessed SDK version
+new Handle:g_hTimer_CheckInterval = INVALID_HANDLE;
 
 // Map Variables
 
@@ -136,6 +139,7 @@ public OnPluginStart()
 	// Cvars: Create a global handle variable.
 	g_cvarEnable = PluginManager_CreateConVar("enable", "1", "Enables or disables this plugin");
 	g_cvarExtendTime = PluginManager_CreateConVar("extend", "5.0", "In minutes, how long the current game/round is extended");
+	g_cvarCheckInterval = PluginManager_CreateConVar("interval", "0.5", "Interval in seconds how often to check the time limit");
 	
 	// Find Cvar
 	g_cvarTimeLimit = FindConVar("mp_timelimit");
@@ -144,9 +148,10 @@ public OnPluginStart()
 	// Hook ConVar Change
 	HookConVarChange(g_cvarEnable, ConVarChange_Enable);
 	HookConVarChange(g_cvarExtendTime, ConVarChange_ExtendTime);
+	HookConVarChange(g_cvarCheckInterval, ConVarChange_CheckInterval);
 
 	// Event Hooks
-	PluginManager_HookEvent("game_end", Event_GameEnd, EventHookMode_Pre, false);
+	
 
 	// Library
 	
@@ -168,6 +173,9 @@ public OnMapStart()
 	if (g_evEngine_Version == Engine_SourceSDK2007){
 		SetConVarString(Plugin_VersionCvar, Plugin_Version);
 	}
+
+	// Timer
+	g_hTimer_CheckInterval = CreateTimer(g_flPlugin_CheckInterval, Timer_CheckTimeLimit, INVALID_HANDLE, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public OnConfigsExecuted()
@@ -176,6 +184,7 @@ public OnConfigsExecuted()
 	g_iPlugin_Enable = GetConVarInt(g_cvarEnable);
 	g_flPlugin_ExtendTime = GetConVarFloat(g_cvarExtendTime);
 	g_iPlugin_TeamPlay = GetConVarInt(g_cvarTeamPlay);
+	g_flPlugin_CheckInterval = GetConVarFloat(g_cvarCheckInterval);
 }
 
 
@@ -200,7 +209,13 @@ public ConVarChange_ExtendTime(Handle:cvar, const String:oldVal[], const String:
 {
 	g_flPlugin_ExtendTime = StringToFloat(newVal);
 }
+public ConVarChange_CheckInterval(Handle:cvar, const String:oldVal[], const String:newVal[])
+{
+	g_flPlugin_CheckInterval = StringToFloat(newVal);
 
+	CloseHandle(g_hTimer_CheckInterval);
+	g_hTimer_CheckInterval = CreateTimer(g_flPlugin_CheckInterval, Timer_CheckTimeLimit, INVALID_HANDLE, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
+}
 
 
 /**************************************************************************************
@@ -223,14 +238,36 @@ public Action:Command_(client, args)
 
 **************************************************************************************/
 /*
-Event to catch the game end before its fired. Depending on mp_teamplay we do the following:
+Depending on mp_teamplay we do the following:
 mp_teamplay 1: we count the score (frags) of each player in one team together, then do that for the other team too.
 mp_teamplay 0: we get the score (frags) of the 2 best players.
 In both cases: if the values are equal we extend the time limit.
 */
-public Action:Event_GameEnd(Handle:event, const String:name[], bool:dontBroadcast)
+public Action:Timer_CheckTimeLimit(Handle:timer)
 {
 	if (g_iPlugin_Enable == 0) {
+		return Plugin_Continue;
+	}
+
+	new Float:timelimit = GetConVarFloat(g_cvarTimeLimit);
+	if (timelimit <= 0.0) {
+		return Plugin_Continue;
+	}
+
+	new timeleft;
+	if (!GetMapTimeLeft(timeleft) || timeleft <= 0) {
+		return Plugin_Continue;
+	}
+
+	if (timeleft > 1) {
+		return Plugin_Continue;
+	}
+
+	new countPlayers = 0;
+	LOOP_CLIENTS(client, CLIENTFILTER_INGAMEAUTH|CLIENTFILTER_NOBOTS|CLIENTFILTER_NOOBSERVERS) {
+		countPlayers++;
+	}
+	if (countPlayers <= 1){
 		return Plugin_Continue;
 	}
 
@@ -270,13 +307,13 @@ public Action:Event_GameEnd(Handle:event, const String:name[], bool:dontBroadcas
 		}
 	}
 
+	//PrintToChatAll("[DEBUG] scoreOne: %d scoreTwo: %d", scoreOne, scoreTwo);
+
 	if (scoreOne == scoreTwo) {
 		// OVER TIME!
-		new Float:timelimit = GetConVarFloat(g_cvarTimeLimit);
-		if (timelimit > 0.0) {
-			SetConVarFloat(g_cvarTimeLimit, timelimit + g_flPlugin_ExtendTime, false, true);
-		}
-		return Plugin_Stop;
+		
+		SetConVarFloat(g_cvarTimeLimit, timelimit + g_flPlugin_ExtendTime, false, true);
+		return Plugin_Continue;
 	}
 
 	return Plugin_Continue;
