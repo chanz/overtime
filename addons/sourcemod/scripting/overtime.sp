@@ -81,6 +81,8 @@ public Plugin:myinfo = {
 new Handle:g_cvarEnable = INVALID_HANDLE;
 new Handle:g_cvarExtendTime = INVALID_HANDLE;
 new Handle:g_cvarCheckInterval = INVALID_HANDLE;
+new Handle:g_cvarSound = INVALID_HANDLE;
+new Handle:g_cvarMessage = INVALID_HANDLE;
 
 // Native Cvars
 new Handle:g_cvarTimeLimit = INVALID_HANDLE;
@@ -91,6 +93,8 @@ new g_iPlugin_Enable 					= 1;
 new g_iPlugin_TeamPlay = -1;
 new Float:g_flPlugin_ExtendTime = 0.0;
 new Float:g_flPlugin_CheckInterval = 0.5;
+new String:g_szPlugin_Sound[PLATFORM_MAX_PATH] = "";
+new String:g_szPlugin_Message[192] = "";
 
 // Timers
 
@@ -140,7 +144,9 @@ public OnPluginStart()
 	g_cvarEnable = PluginManager_CreateConVar("enable", "1", "Enables or disables this plugin");
 	g_cvarExtendTime = PluginManager_CreateConVar("extend", "5.0", "In minutes, how long the current game/round is extended");
 	g_cvarCheckInterval = PluginManager_CreateConVar("interval", "0.5", "Interval in seconds how often to check the time limit");
-	
+	g_cvarSound = PluginManager_CreateConVar("sound", "/vo/npc/male01/evenodds.wav", "Sound to play when the overtime is reached");
+	g_cvarMessage = PluginManager_CreateConVar("message", "[SM] OVERTIME!", "Shows this message, when overtime is reached");
+
 	// Find Cvar
 	g_cvarTimeLimit = FindConVar("mp_timelimit");
 	g_cvarTeamPlay = FindConVar("mp_teamplay");
@@ -149,6 +155,8 @@ public OnPluginStart()
 	HookConVarChange(g_cvarEnable, ConVarChange_Enable);
 	HookConVarChange(g_cvarExtendTime, ConVarChange_ExtendTime);
 	HookConVarChange(g_cvarCheckInterval, ConVarChange_CheckInterval);
+	HookConVarChange(g_cvarSound, ConVarChange_Sound);
+	HookConVarChange(g_cvarMessage, ConVarChange_Message);
 
 	// Event Hooks
 	
@@ -185,6 +193,10 @@ public OnConfigsExecuted()
 	g_flPlugin_ExtendTime = GetConVarFloat(g_cvarExtendTime);
 	g_iPlugin_TeamPlay = GetConVarInt(g_cvarTeamPlay);
 	g_flPlugin_CheckInterval = GetConVarFloat(g_cvarCheckInterval);
+	GetConVarString(g_cvarSound, g_szPlugin_Sound, sizeof(g_szPlugin_Sound));
+	GetConVarString(g_cvarMessage, g_szPlugin_Message, sizeof(g_szPlugin_Message));
+
+	SetupSound(g_szPlugin_Sound);
 }
 
 
@@ -216,7 +228,15 @@ public ConVarChange_CheckInterval(Handle:cvar, const String:oldVal[], const Stri
 	CloseHandle(g_hTimer_CheckInterval);
 	g_hTimer_CheckInterval = CreateTimer(g_flPlugin_CheckInterval, Timer_CheckTimeLimit, INVALID_HANDLE, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 }
-
+public ConVarChange_Sound(Handle:cvar, const String:oldVal[], const String:newVal[])
+{
+	strcopy(g_szPlugin_Sound, sizeof(g_szPlugin_Sound), newVal);
+	SetupSound(g_szPlugin_Sound);
+}
+public ConVarChange_Message(Handle:cvar, const String:oldVal[], const String:newVal[])
+{
+	strcopy(g_szPlugin_Message, sizeof(g_szPlugin_Message), newVal);
+}
 
 /**************************************************************************************
 
@@ -249,16 +269,21 @@ public Action:Timer_CheckTimeLimit(Handle:timer)
 		return Plugin_Continue;
 	}
 
+	// No timelimit - nothing to do
 	new Float:timelimit = GetConVarFloat(g_cvarTimeLimit);
 	if (timelimit <= 0.0) {
 		return Plugin_Continue;
 	}
 
+	// We can't get how much time is left - nothing to do
 	new timeleft;
 	if (!GetMapTimeLeft(timeleft) || timeleft <= 0) {
 		return Plugin_Continue;
 	}
 
+	//PrintToChatAll("timeleft: %d", timeleft);
+
+	// Its not the last second - nothing to do
 	if (timeleft > 1) {
 		return Plugin_Continue;
 	}
@@ -267,6 +292,7 @@ public Action:Timer_CheckTimeLimit(Handle:timer)
 	LOOP_CLIENTS(client, CLIENTFILTER_INGAMEAUTH|CLIENTFILTER_NOBOTS|CLIENTFILTER_NOOBSERVERS) {
 		countPlayers++;
 	}
+	// Only one or less players - nothing to do
 	if (countPlayers <= 1){
 		return Plugin_Continue;
 	}
@@ -307,12 +333,11 @@ public Action:Timer_CheckTimeLimit(Handle:timer)
 		}
 	}
 
-	//PrintToChatAll("[DEBUG] scoreOne: %d scoreTwo: %d", scoreOne, scoreTwo);
-
-	if (scoreOne == scoreTwo) {
+	if (scoreOne == scoreTwo && scoreOne != 0 && scoreTwo != 0) {
 		// OVER TIME!
-		
-		SetConVarFloat(g_cvarTimeLimit, timelimit + g_flPlugin_ExtendTime, false, true);
+		EmitSoundToAll(g_szPlugin_Sound);
+		PrintToChatAll(g_szPlugin_Message);
+		SetConVarFloat(g_cvarTimeLimit, timelimit + g_flPlugin_ExtendTime, false, false);
 		return Plugin_Continue;
 	}
 
@@ -336,6 +361,10 @@ public Action:Timer_CheckTimeLimit(Handle:timer)
 	S T O C K
 
 ***************************************************************************************/
+stock SetupSound(const String:path[PLATFORM_MAX_PATH]){
 
-
+	// Prechache and DL table
+	PrecacheSound(path, true);
+	File_AddToDownloadsTable(path, false);
+}
 
